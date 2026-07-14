@@ -419,18 +419,29 @@ function renderDashboard() {
   // 트렌드 차트 (가동율 %)
   const labels = months;
   const trendDatasets = MATERIALS.map(m => ({
-    label: m,
+    label: m, type: "line", order: 1,
     data: months.map(mo => entries[mo] && entries[mo][m] != null
       ? +rate(entries[mo][m], capa[m]).toFixed(1) : null),
     borderColor: COLORS[m], backgroundColor: COLORS[m],
-    tension: 0.25, spanGaps: true, pointRadius: 4
+    borderWidth: 2.5, tension: 0.25, spanGaps: true, pointRadius: 4,
+    datalabels: {
+      align: "top", anchor: "end", offset: 4, clip: false,
+      color: COLORS[m], font: { size: 11, weight: "bold" },
+      formatter: v => v == null ? "" : v + "%"
+    }
   }));
-  // 전체(통합) 가동율 라인
+  // 전체(통합) 가동율 — 막대 그래프
   trendDatasets.unshift({
-    label: "전체",
+    label: "전체", type: "bar", order: 2,
     data: months.map(mo => { const r = totalRateOf(mo); return r != null ? +r.toFixed(1) : null; }),
-    borderColor: COLORS.TOTAL, backgroundColor: COLORS.TOTAL,
-    borderWidth: 3, tension: 0.25, spanGaps: true, pointRadius: 5, pointStyle: "rectRot"
+    backgroundColor: "rgba(17,24,39,0.18)",
+    borderColor: COLORS.TOTAL, borderWidth: 1.5,
+    barPercentage: 0.55, borderRadius: 6,
+    datalabels: {
+      align: "top", anchor: "end", offset: 2, clip: false,
+      color: COLORS.TOTAL, font: { size: 12, weight: "bold" },
+      formatter: v => v == null ? "" : v + "%"
+    }
   });
   if (trendChart) trendChart.destroy();
   trendChart = new Chart(document.getElementById("trendChart"), {
@@ -442,15 +453,9 @@ function renderDashboard() {
         title: { display: true, text: "가동율 (%)" },
         ticks: { callback: v => v + "%" } } },
       plugins: {
-        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` } },
-        datalabels: {
-          align: "top", anchor: "end", offset: 2, clip: false,
-          color: ctx => ctx.dataset.borderColor,
-          font: { size: 10, weight: "bold" },
-          formatter: v => v == null ? "" : v + "%"
-        }
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` } }
       },
-      layout: { padding: { top: 18 } }
+      layout: { padding: { top: 22 } }
     },
     plugins: [{
       id: "line100",
