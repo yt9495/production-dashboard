@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>생산 가동율 관리 시스템</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root {
+    --primary: #1a56db; --primary-dark: #1240a8;
+    --bg: #f3f4f6; --card: #ffffff; --border: #e5e7eb;
+    --text: #111827; --muted: #6b7280;
+    --hf: #1a56db; --hno3: #059669; --hcl: #d97706;
+    --good: #059669; --warn: #d97706; --bad: #dc2626;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI','Malgun Gothic',sans-serif; background:var(--bg); color:var(--text); }
+  header { background:var(--primary); color:#fff; padding:16px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  header h1 { font-size:20px; }
+  #connStatus { font-size:12px; padding:4px 10px; border-radius:12px; background:rgba(255,255,255,.2); }
+  nav { background:var(--card); border-bottom:1px solid var(--border); display:flex; padding:0 24px; }
+  nav button { background:none; border:none; padding:14px 20px; font-size:15px; cursor:pointer; color:var(--muted); border-bottom:3px solid transparent; }
+  nav button.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:600; }
+  main { max-width:1200px; margin:0 auto; padding:24px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px; margin-bottom:20px; }
+  .card h2 { font-size:16px; margin-bottom:14px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; }
+  label { font-size:13px; color:var(--muted); display:block; margin-bottom:4px; }
+  input[type=month], input[type=number] { padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:14px; width:100%; }
+  .field { flex:1; min-width:140px; }
+  button.btn { background:var(--primary); color:#fff; border:none; padding:9px 18px; border-radius:6px; font-size:14px; cursor:pointer; }
+  button.btn:hover { background:var(--primary-dark); }
+  button.btn.gray { background:#6b7280; }
+  button.btn.small { padding:4px 10px; font-size:12px; }
+  button.btn.red { background:var(--bad); }
+  .cards3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; margin-bottom:20px; }
+  .kpi { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:18px; border-top:4px solid var(--muted); }
+  .kpi .name { font-size:14px; font-weight:600; }
+  .kpi .rate { font-size:34px; font-weight:700; margin:6px 0; }
+  .kpi .sub { font-size:12px; color:var(--muted); line-height:1.6; }
+  .bar { height:8px; background:var(--bg); border-radius:4px; margin-top:8px; overflow:hidden; }
+  .bar > div { height:100%; border-radius:4px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { border:1px solid var(--border); padding:8px 6px; text-align:center; }
+  th { background:#f9fafb; }
+  td.num { text-align:right; }
+  .rate-good { color:var(--good); font-weight:600; }
+  .rate-warn { color:var(--warn); font-weight:600; }
+  .rate-bad { color:var(--bad); font-weight:600; }
+  .chart-wrap { position:relative; height:340px; }
+  .banner { background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:10px 16px; border-radius:8px; font-size:13px; margin-bottom:16px; }
+  .hidden { display:none; }
+  .tbl-scroll { overflow-x:auto; }
+  @media print {
+    header, nav, #tab-input, #tab-settings, .no-print, .banner { display:none !important; }
+    main { max-width:100%; padding:0; }
+    .card { border:none; page-break-inside:avoid; }
+    .chart-wrap { height:280px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏭 생산 가동율 관리 시스템</h1>
+  <span id="connStatus">연결 중...</span>
+</header>
+<nav>
+  <button class="active" data-tab="dashboard" onclick="showTab('dashboard')">📊 대시보드</button>
+  <button data-tab="input" onclick="showTab('input')">✏️ 데이터 입력</button>
+  <button data-tab="settings" onclick="showTab('settings')">⚙️ 설정</button>
+</nav>
+<main>
+  <div id="demoBanner" class="banner hidden">
+    ⚠️ 데모 모드: Firebase 설정이 입력되지 않아 데이터가 이 브라우저에만 저장됩니다.
+    팀원과 공유하려면 index.html 상단의 firebaseConfig를 입력하세요 (README 참고).
+  </div>
+
+  <!-- ============ 대시보드 ============ -->
+  <section id="tab-dashboard">
+    <div class="card no-print">
+      <h2>조회 기간</h2>
+      <div class="row">
+        <div class="field"><label>시작 월</label><input type="month" id="fromMonth"></div>
+        <div class="field"><label>종료 월</label><input type="month" id="toMonth"></div>
+        <button class="btn" onclick="renderDashboard()">조회</button>
+        <button class="btn gray" onclick="setQuick(6)">최근 6개월</button>
+        <button class="btn gray" onclick="setQuick(12)">최근 12개월</button>
+        <button class="btn gray" onclick="window.print()">🖨 보고서 인쇄</button>
+      </div>
+    </div>
+
+    <h2 style="margin:4px 0 12px;font-size:15px;">기간 평균 가동율 <span id="periodLabel" style="color:var(--muted);font-weight:normal;font-size:13px;"></span></h2>
+    <div class="cards3" id="kpiCards"></div>
+
+    <div class="card">
+      <h2>월별 가동율 트렌드 (%)</h2>
+      <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h2>월별 생산량 vs 생산 Capa (kg)</h2>
+      <div class="chart-wrap"><canvas id="prodChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <h2>월별 보고서</h2>
+      <div class="tbl-scroll">
+      <table id="reportTable">
+        <thead>
+          <tr>
+            <th rowspan="2">월</th>
+            <th colspan="3">HF</th><th colspan="3">HNO3</th><th colspan="3">HCl</th>
+            <th rowspan="2">종합<br>가동율</th>
+          </tr>
+          <tr>
+            <th>생산량(kg)</th><th>Capa(kg)</th><th>가동율</th>
+            <th>생산량(kg)</th><th>Capa(kg)</th><th>가동율</th>
+            <th>생산량(kg)</th><th>Capa(kg)</th><th>가동율</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+        <tfoot></tfoot>
+      </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 데이터 입력 ============ -->
+  <section id="tab-input" class="hidden">
+    <div class="card">
+      <h2>월별 실제 생산량 입력</h2>
+      <div class="row">
+        <div class="field"><label>대상 월</label><input type="month" id="inputMonth"></div>
+        <div class="field"><label>HF 생산량 (kg) <span id="capaHintHF"></span></label><input type="number" id="inHF" min="0" placeholder="예: 350000"></div>
+        <div class="field"><label>HNO3 생산량 (kg) <span id="capaHintHNO3"></span></label><input type="number" id="inHNO3" min="0" placeholder="예: 190000"></div>
+        <div class="field"><label>HCl 생산량 (kg) <span id="capaHintHCl"></span></label><input type="number" id="inHCl" min="0" placeholder="예: 185000"></div>
+        <button class="btn" onclick="saveEntry()">💾 저장</button>
+      </div>
+      <p id="saveMsg" style="font-size:13px;margin-top:10px;color:var(--good);"></p>
+    </div>
+    <div class="card">
+      <h2>입력된 데이터</h2>
+      <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>월</th><th>HF (kg)</th><th>HNO3 (kg)</th><th>HCl (kg)</th><th>관리</th></tr></thead>
+        <tbody id="entryList"></tbody>
+      </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 설정 ============ -->
+  <section id="tab-settings" class="hidden">
+    <div class="card">
+      <h2>월별 생산 Capa 설정 (kg)</h2>
+      <div class="row">
+        <div class="field"><label>HF</label><input type="number" id="capaHF" min="1"></div>
+        <div class="field"><label>HNO3</label><input type="number" id="capaHNO3" min="1"></div>
+        <div class="field"><label>HCl</label><input type="number" id="capaHCl" min="1"></div>
+        <button class="btn" onclick="saveCapa()">💾 Capa 저장</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-top:10px;">
+        기본값: HF 372,000 / HNO3 204,600 / HCl 204,600 kg. 변경 시 전체 기간에 적용됩니다.
+      </p>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ================================================================
+   Firebase 설정 (프로젝트: production-rate)
+   ================================================================ */
+const firebaseConfig = {
+  apiKey: "AIzaSyCgIc14q891tspdWtZ3Wc46-BRDgVKhTp0",
+  authDomain: "production-rate-2d967.firebaseapp.com",
+  projectId: "production-rate-2d967",
+  storageBucket: "production-rate-2d967.firebasestorage.app",
+  messagingSenderId: "638282864566",
+  appId: "1:638282864566:web:5a96d0575f5b424f581317"
+};
+/* ================================================================ */
+
+const MATERIALS = ["HF", "HNO3", "HCl"];
+const COLORS = { HF: "#1a56db", HNO3: "#059669", HCl: "#d97706" };
+const DEFAULT_CAPA = { HF: 372000, HNO3: 204600, HCl: 204600 };
+
+let capa = { ...DEFAULT_CAPA };
+let entries = {};   // { "2026-07": {HF:0, HNO3:0, HCl:0}, ... }
+let db = null, demoMode = false;
+let trendChart = null, prodChart = null;
+
+/* ---------- 초기화 ---------- */
+function init() {
+  const configured = firebaseConfig.apiKey !== "YOUR_API_KEY";
+  if (configured) {
+    try {
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.firestore();
+      setStatus("🟢 Firebase 연결됨", false);
+      // 실시간 동기화: 팀원이 입력하면 자동 반영
+      db.collection("production").onSnapshot(snap => {
+        entries = {};
+        snap.forEach(doc => { entries[doc.id] = doc.data(); });
+        refreshAll();
+      }, err => { console.error(err); setStatus("🔴 연결 오류: " + err.code, false); });
+      db.collection("settings").doc("capacity").onSnapshot(doc => {
+        if (doc.exists) capa = { ...DEFAULT_CAPA, ...doc.data() };
+        refreshAll();
+      });
+    } catch (e) {
+      console.error(e); enableDemo();
+    }
+  } else {
+    enableDemo();
+  }
+  // 기본 조회기간: 올해 1월 ~ 이번 달
+  const now = new Date();
+  const ym = m => m.toISOString().slice(0, 7);
+  document.getElementById("fromMonth").value = now.getFullYear() + "-01";
+  document.getElementById("toMonth").value = ym(now);
+  document.getElementById("inputMonth").value = ym(now);
+  refreshAll();
+}
+
+function enableDemo() {
+  demoMode = true;
+  document.getElementById("demoBanner").classList.remove("hidden");
+  setStatus("🟡 데모 모드 (로컬 저장)", true);
+  entries = JSON.parse(localStorage.getItem("prod_entries") || "{}");
+  capa = { ...DEFAULT_CAPA, ...JSON.parse(localStorage.getItem("prod_capa") || "{}") };
+}
+
+function setStatus(t) { document.getElementById("connStatus").textContent = t; }
+
+/* ---------- 탭 ---------- */
+function showTab(name) {
+  ["dashboard", "input", "settings"].forEach(t => {
+    document.getElementById("tab-" + t).classList.toggle("hidden", t !== name);
+  });
+  document.querySelectorAll("nav button").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === name));
+  if (name === "dashboard") renderDashboard();
+}
+
+/* ---------- 데이터 저장 ---------- */
+async function saveEntry() {
+  const month = document.getElementById("inputMonth").value;
+  if (!month) { alert("대상 월을 선택하세요."); return; }
+  const data = {};
+  for (const m of MATERIALS) {
+    const v = document.getElementById("in" + m).value;
+    if (v === "") { alert(m + " 생산량을 입력하세요."); return; }
+    data[m] = Number(v);
+    if (data[m] < 0) { alert("생산량은 0 이상이어야 합니다."); return; }
+  }
+  if (demoMode) {
+    entries[month] = data;
+    localStorage.setItem("prod_entries", JSON.stringify(entries));
+    refreshAll();
+  } else {
+    await db.collection("production").doc(month).set(
+      { ...data, updatedAt: new Date().toISOString() });
+  }
+  const msg = document.getElementById("saveMsg");
+  msg.textContent = "✅ " + month + " 데이터가 저장되었습니다.";
+  setTimeout(() => msg.textContent = "", 3000);
+  MATERIALS.forEach(m => document.getElementById("in" + m).value = "");
+}
+
+async function deleteEntry(month) {
+  if (!confirm(month + " 데이터를 삭제할까요?")) return;
+  if (demoMode) {
+    delete entries[month];
+    localStorage.setItem("prod_entries", JSON.stringify(entries));
+    refreshAll();
+  } else {
+    await db.collection("production").doc(month).delete();
+  }
+}
+
+function editEntry(month) {
+  const e = entries[month];
+  document.getElementById("inputMonth").value = month;
+  MATERIALS.forEach(m => document.getElementById("in" + m).value = e[m] ?? "");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function saveCapa() {
+  const c = {};
+  for (const m of MATERIALS) {
+    c[m] = Number(document.getElementById("capa" + m).value);
+    if (!c[m] || c[m] <= 0) { alert(m + " Capa는 0보다 커야 합니다."); return; }
+  }
+  if (demoMode) {
+    capa = c;
+    localStorage.setItem("prod_capa", JSON.stringify(c));
+    refreshAll();
+  } else {
+    await db.collection("settings").doc("capacity").set(c);
+  }
+  alert("Capa가 저장되었습니다.");
+}
+
+/* ---------- 계산 ---------- */
+const rate = (actual, cap) => cap > 0 ? actual / cap * 100 : 0;
+const fmt = n => n.toLocaleString("ko-KR");
+const fmtPct = n => n.toFixed(1) + "%";
+function rateClass(r) { return r >= 90 ? "rate-good" : r >= 70 ? "rate-warn" : "rate-bad"; }
+
+function monthsInRange(from, to) {
+  const out = [];
+  if (!from || !to || from > to) return out;
+  let [y, m] = from.split("-").map(Number);
+  const [ty, tm] = to.split("-").map(Number);
+  while (y < ty || (y === ty && m <= tm)) {
+    out.push(y + "-" + String(m).padStart(2, "0"));
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+
+function setQuick(n) {
+  const now = new Date();
+  const to = now.toISOString().slice(0, 7);
+  const d = new Date(now.getFullYear(), now.getMonth() - (n - 1), 1);
+  const from = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  document.getElementById("fromMonth").value = from;
+  document.getElementById("toMonth").value = to;
+  renderDashboard();
+}
+
+/* ---------- 화면 갱신 ---------- */
+function refreshAll() {
+  renderEntryList();
+  renderCapaInputs();
+  renderCapaHints();
+  renderDashboard();
+}
+
+function renderCapaInputs() {
+  MATERIALS.forEach(m => document.getElementById("capa" + m).value = capa[m]);
+}
+function renderCapaHints() {
+  MATERIALS.forEach(m =>
+    document.getElementById("capaHint" + m).textContent = "/ Capa " + fmt(capa[m]));
+}
+
+function renderEntryList() {
+  const tbody = document.getElementById("entryList");
+  const months = Object.keys(entries).sort().reverse();
+  if (months.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">입력된 데이터가 없습니다.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = months.map(mo => {
+    const e = entries[mo];
+    return `<tr><td>${mo}</td>
+      <td class="num">${fmt(e.HF ?? 0)}</td>
+      <td class="num">${fmt(e.HNO3 ?? 0)}</td>
+      <td class="num">${fmt(e.HCl ?? 0)}</td>
+      <td><button class="btn small gray" onclick="editEntry('${mo}')">수정</button>
+          <button class="btn small red" onclick="deleteEntry('${mo}')">삭제</button></td></tr>`;
+  }).join("");
+}
+
+function renderDashboard() {
+  const from = document.getElementById("fromMonth").value;
+  const to = document.getElementById("toMonth").value;
+  const months = monthsInRange(from, to);
+  document.getElementById("periodLabel").textContent =
+    months.length ? `(${from} ~ ${to}, ${months.length}개월)` : "(기간을 선택하세요)";
+
+  // KPI 카드
+  const kpiWrap = document.getElementById("kpiCards");
+  kpiWrap.innerHTML = MATERIALS.map(m => {
+    const withData = months.filter(mo => entries[mo] && entries[mo][m] != null);
+    const total = withData.reduce((s, mo) => s + entries[mo][m], 0);
+    const totalCapa = capa[m] * withData.length;
+    const avg = totalCapa > 0 ? rate(total, totalCapa) : 0;
+    const barColor = avg >= 90 ? "var(--good)" : avg >= 70 ? "var(--warn)" : "var(--bad)";
+    return `<div class="kpi" style="border-top-color:${COLORS[m]}">
+      <div class="name" style="color:${COLORS[m]}">${m}</div>
+      <div class="rate ${rateClass(avg)}">${withData.length ? fmtPct(avg) : "—"}</div>
+      <div class="sub">총 생산량: ${fmt(total)} kg<br>
+        총 Capa: ${fmt(totalCapa)} kg (${withData.length}개월분)<br>
+        월 Capa: ${fmt(capa[m])} kg</div>
+      <div class="bar"><div style="width:${Math.min(avg, 100)}%;background:${barColor}"></div></div>
+    </div>`;
+  }).join("");
+
+  // 트렌드 차트 (가동율 %)
+  const labels = months;
+  const trendDatasets = MATERIALS.map(m => ({
+    label: m,
+    data: months.map(mo => entries[mo] && entries[mo][m] != null
+      ? +rate(entries[mo][m], capa[m]).toFixed(1) : null),
+    borderColor: COLORS[m], backgroundColor: COLORS[m],
+    tension: 0.25, spanGaps: true, pointRadius: 4
+  }));
+  if (trendChart) trendChart.destroy();
+  trendChart = new Chart(document.getElementById("trendChart"), {
+    type: "line",
+    data: { labels, datasets: trendDatasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, suggestedMax: 110,
+        title: { display: true, text: "가동율 (%)" },
+        ticks: { callback: v => v + "%" } } },
+      plugins: {
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` } }
+      }
+    },
+    plugins: [{
+      id: "line100",
+      afterDraw(chart) {
+        const y = chart.scales.y.getPixelForValue(100);
+        const { left, right } = chart.chartArea;
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.strokeStyle = "rgba(220,38,38,.5)"; ctx.setLineDash([6, 4]);
+        ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+        ctx.restore();
+      }
+    }]
+  });
+
+  // 생산량 vs Capa 차트
+  const prodDatasets = [];
+  MATERIALS.forEach(m => {
+    prodDatasets.push({
+      label: m + " 생산량", type: "bar",
+      data: months.map(mo => entries[mo] ? entries[mo][m] ?? null : null),
+      backgroundColor: COLORS[m] + "cc"
+    });
+  });
+  MATERIALS.forEach(m => {
+    prodDatasets.push({
+      label: m + " Capa", type: "line",
+      data: months.map(() => capa[m]),
+      borderColor: COLORS[m], borderDash: [6, 4], pointRadius: 0, borderWidth: 1.5
+    });
+  });
+  if (prodChart) prodChart.destroy();
+  prodChart = new Chart(document.getElementById("prodChart"), {
+    data: { labels, datasets: prodDatasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, title: { display: true, text: "kg" },
+        ticks: { callback: v => v.toLocaleString() } } }
+    }
+  });
+
+  // 보고서 테이블
+  const tbody = document.querySelector("#reportTable tbody");
+  const tfoot = document.querySelector("#reportTable tfoot");
+  const sum = { HF: 0, HNO3: 0, HCl: 0 };
+  const cnt = { HF: 0, HNO3: 0, HCl: 0 };
+  tbody.innerHTML = months.map(mo => {
+    const e = entries[mo];
+    let totalR = null;
+    let cells = MATERIALS.map(m => {
+      if (e && e[m] != null) {
+        const r = rate(e[m], capa[m]);
+        sum[m] += e[m]; cnt[m]++;
+        return `<td class="num">${fmt(e[m])}</td><td class="num">${fmt(capa[m])}</td>
+                <td class="${rateClass(r)}">${fmtPct(r)}</td>`;
+      }
+      return `<td class="num">—</td><td class="num">${fmt(capa[m])}</td><td>—</td>`;
+    }).join("");
+    if (e) {
+      const tp = MATERIALS.reduce((s, m) => s + (e[m] ?? 0), 0);
+      const tc = MATERIALS.reduce((s, m) => s + capa[m], 0);
+      totalR = rate(tp, tc);
+    }
+    return `<tr><td>${mo}</td>${cells}
+      <td class="${totalR != null ? rateClass(totalR) : ""}">${totalR != null ? fmtPct(totalR) : "—"}</td></tr>`;
+  }).join("") || '<tr><td colspan="11" style="color:var(--muted)">기간 내 데이터가 없습니다.</td></tr>';
+
+  // 합계/평균 행
+  if (months.length) {
+    const cells = MATERIALS.map(m => {
+      const tc = capa[m] * cnt[m];
+      const r = tc > 0 ? rate(sum[m], tc) : null;
+      return `<td class="num"><b>${fmt(sum[m])}</b></td><td class="num"><b>${fmt(tc)}</b></td>
+              <td class="${r != null ? rateClass(r) : ""}"><b>${r != null ? fmtPct(r) : "—"}</b></td>`;
+    }).join("");
+    const gp = MATERIALS.reduce((s, m) => s + sum[m], 0);
+    const gc = MATERIALS.reduce((s, m) => s + capa[m] * cnt[m], 0);
+    const gr = gc > 0 ? rate(gp, gc) : null;
+    tfoot.innerHTML = `<tr style="background:#f9fafb"><td><b>합계/평균</b></td>${cells}
+      <td class="${gr != null ? rateClass(gr) : ""}"><b>${gr != null ? fmtPct(gr) : "—"}</b></td></tr>`;
+  } else {
+    tfoot.innerHTML = "";
+  }
+}
+
+init();
+</script>
+</body>
+</html>
